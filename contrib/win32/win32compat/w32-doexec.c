@@ -375,13 +375,23 @@ int do_exec_windows(struct ssh *ssh, Session *s, const char *command, int pty) {
 			   stays unquoted. Shells whose -c takes a single argv operand
 			   (bash and other GNU-style shells) need the command as one
 			   quoted, CommandLineToArgvW-escaped argument, or only its first
-			   word reaches -c. Matches the non-pty path's per-type dispatch. */
+			   word reaches -c. Other shells keep the raw text unless
+			   DefaultShellEscapeArguments opted in to escaping (arg_escape),
+			   mirroring the non-pty path's per-type dispatch below. */
 			char *operand = NULL;
 			const char *operand_sp = command;
-			if (shell_type != SH_CMD && shell_type != SH_PS &&
-			    shell_type != SH_SHELLHOST &&
-			    (operand = quote_argv_operand(command)) != NULL)
+			if (shell_type == SH_BASH || shell_type == SH_CYGWIN ||
+			    (shell_type == SH_OTHER && arg_escape)) {
+				if ((operand = quote_argv_operand(command)) == NULL) {
+					/* An unquoted fallback would truncate the command at its
+					   first word again; fail the exec instead of launching a
+					   different command than the client asked for. */
+					errno = ENOMEM;
+					error("quote_argv_operand: out of memory");
+					goto cleanup;
+				}
 				operand_sp = operand;
+			}
 			size_t len = strlen(shell) + 1 + strlen(shell_command_option_local) + 1 + strlen(operand_sp) + 1;
 			pty_cmd_cp = pty_cmd = calloc(1, len);
 			if (pty_cmd != NULL)
